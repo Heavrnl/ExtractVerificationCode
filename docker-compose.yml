@@ -1,0 +1,15 @@
+version: '3'
+services:
+  flask_app:
+    container_name: extract_verification_code
+    build: .
+    ports:
+      - "51223:5000"
+    volumes:
+      - .:/app
+    networks:
+      - ai  # 使用共享网络
+
+networks:
+  ai:
+    external: true  # 使用外部创建的共享网络
