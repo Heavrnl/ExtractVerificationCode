@@ -31,4 +31,4 @@ def extract_verification_code():
     return jsonify({"verification_code": verification_code})  # 返回找到的验证码
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', debug=True)
+    app.run(host='0.0.0.0', port=5788,debug=True)

@@ -1,10 +1,10 @@
 version: '3'
 services:
   flask_app:
-    container_name: extract_verification_code
+    container_name: evc
     build: .
     ports:
-      - "51223:5000"
+      - "51223:5788"
     volumes:
       - .:/app
     networks:
