@@ -6,3 +6,4 @@ USE_AZURE_API = True  # 设置为True时使用Azure API,False时使用本地LLM
 AZURE_ENDPOINT = "https://models.inference.ai.azure.com"
 AZURE_MODEL_NAME = "gpt-4o-mini"
 GITHUB_TOKEN = ""
+
