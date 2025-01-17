@@ -5,11 +5,12 @@ from send_code import upload
 import re
 from dotenv import load_dotenv
 import os
+import google.generativeai as genai
 
 # 加载环境变量
 load_dotenv()
 
-app = Flask(__name__)  # 创建 Flask 应用程序实例
+app = Flask(__name__) 
 
 # 将关键词列表单独定义
 VERIFICATION_KEYWORDS = [
@@ -56,14 +57,16 @@ def contains_verification_keywords(text):
 
 def extract_code_azure(text):
     text = desensitize_text(text)  # 脱敏处理
+    prompt_template = os.getenv('PROMPT_TEMPLATE')
+    prompt = prompt_template.format(input_text=text)
+    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
     }
     data = {
         "messages": [
-            {"role": "system", "content": "从以下文本中提取验证码。只输出验证码，不要有任何其他文字。如果没有验证码，只输出'None'。"},
-            {"role": "user", "content": text}
+            {"role": "system", "content": prompt}
         ],
         "model": os.getenv('AZURE_MODEL_NAME'),
         "temperature": 1,
@@ -75,8 +78,51 @@ def extract_code_azure(text):
     return response_json['choices'][0]['message']['content'].strip()
 
 def extract_code_local(text):
-    # TODO: 实现本地提取逻辑
+    """使用正则表达式匹配验证码
+    常见的验证码模式：
+    1. 4-6位纯数字
+    2. 4-8位数字字母混合
+    3. 前后可能带有特定文字标记
+    """
+    # 对文本进行脱敏处理
+    text = desensitize_text(text)
+    
+    # 常见验证码模式的正则表达式
+    patterns = [
+        # 前后带验证码字样的4-6位纯数字
+        r'(?:验证码|校验码|确认码|动态码|验证代码|码|code|Code).{0,4}?(\d{4,6})\D',
+        # 前后带验证码字样的4-8位数字字母混合
+        r'(?:验证码|校验码|确认码|动态码|验证代码|码|code|Code).{0,4}?([0-9a-zA-Z]{4,8})\D',
+        # 单独的4-6位纯数字
+        r'\D(\d{4,6})\D',
+        # 单独的4-8位数字字母混合
+        r'\D([0-9a-zA-Z]{4,8})\D'
+    ]
+    
+    # 依次尝试各种模式
+    for pattern in patterns:
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        for match in matches:
+            # 返回第一个匹配到的验证码
+            return match.group(1)
+    
+    # 如果没有找到验证码，返回None
     return "None"
+
+def extract_code_gemini(text):
+    """使用 Gemini API 提取验证码"""
+    text = desensitize_text(text)  # 脱敏处理
+    prompt_template = os.getenv('PROMPT_TEMPLATE')
+    prompt = prompt_template.format(input_text=text)
+    
+    try:
+        genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+        model = genai.GenerativeModel(os.getenv('GEMINI_MODEL'))
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        logging.error(f"Gemini API error: {e}")
+        return "None"
 
 @app.route('/evc', methods=['POST'])
 def extract_verification_code():
@@ -86,11 +132,21 @@ def extract_verification_code():
     if not contains_verification_keywords(text):
         return jsonify({"message": "No verification code keywords found"}), 400
 
-    use_azure = os.getenv('USE_AZURE_API', 'false').lower() == 'true'
-    if use_azure:
-        verification_code = extract_code_azure(text)
-    else:
+    use_local = os.getenv('USE_LOCAL', 'false').lower() == 'true'
+    api_type = os.getenv('API_TYPE', 'azure').lower()
+    
+    verification_code = "None"
+    
+    # 如果启用了本地匹配，先尝试本地匹配
+    if use_local:
         verification_code = extract_code_local(text)
+    
+    # 如果本地匹配没有结果，使用选定的API
+    if verification_code == "None":
+        if api_type == 'azure':
+            verification_code = extract_code_azure(text)
+        elif api_type == 'gemini':
+            verification_code = extract_code_gemini(text)
 
     logging.info(f"verification_code:{verification_code}")
     if verification_code.lower() == 'none':
