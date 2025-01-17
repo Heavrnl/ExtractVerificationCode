@@ -10,6 +10,14 @@ import google.generativeai as genai
 # 加载环境变量
 load_dotenv()
 
+# 根据DEBUG_MODE设置日志级别
+log_level = logging.INFO if os.getenv('DEBUG_MODE', 'false').lower() == 'true' else logging.ERROR
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+
 app = Flask(__name__) 
 
 # 将关键词列表单独定义
@@ -47,13 +55,9 @@ def desensitize_text(text):
     return text
 
 def contains_verification_keywords(text):
-    # 将关键词列表转换为正则表达式模式
-    pattern = r'\b(' + '|'.join(re.escape(keyword) for keyword in VERIFICATION_KEYWORDS) + r')\b'
-    # 编译正则表达式
-    regex = re.compile(pattern, re.IGNORECASE)
-    
-    # 使用正则表达式搜索
-    return bool(regex.search(text))
+    # 简化匹配逻辑，直接检查关键词是否在文本中，不区分大小写
+    text = text.lower()
+    return any(keyword.lower() in text for keyword in VERIFICATION_KEYWORDS)
 
 def extract_code_azure(text):
     text = desensitize_text(text)  # 脱敏处理
@@ -128,27 +132,38 @@ def extract_code_gemini(text):
 def extract_verification_code():
     data = request.get_json()
     text = data.get('text')
+    
+    logging.info(f"收到文本: {text}")
 
     if not contains_verification_keywords(text):
+        logging.info("未找到验证码关键词")
         return jsonify({"message": "No verification code keywords found"}), 400
 
     use_local = os.getenv('USE_LOCAL', 'false').lower() == 'true'
     api_type = os.getenv('API_TYPE', 'azure').lower()
     
+    logging.info(f"当前配置 - 本地提取: {use_local}, API类型: {api_type}")
     verification_code = "None"
     
     # 如果启用了本地匹配，先尝试本地匹配
     if use_local:
+        logging.info("尝试本地正则匹配...")
         verification_code = extract_code_local(text)
+        logging.info(f"本地匹配结果: {verification_code}")
     
     # 如果本地匹配没有结果，使用选定的API
     if verification_code == "None":
         if api_type == 'azure':
+            logging.info("尝试使用Azure API...")
             verification_code = extract_code_azure(text)
+            logging.info(f"Azure API结果: {verification_code}")
         elif api_type == 'gemini':
+            logging.info("尝试使用Gemini API...")
             verification_code = extract_code_gemini(text)
+            logging.info(f"Gemini API结果: {verification_code}")
 
-    logging.info(f"verification_code:{verification_code}")
+    logging.info(f"最终提取的验证码: {verification_code}")
+    
     if verification_code.lower() == 'none':
         return jsonify({"message": "No verification code found"}), 404
 

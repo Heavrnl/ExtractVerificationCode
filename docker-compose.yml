@@ -6,9 +6,13 @@ services:
       - "51223:5788"
     volumes:
       - .:/app
+    env_file:
+      - .env
     networks:
       - evc
 
 networks:
   evc:
-    external: true  # 使用外部创建的共享网络
+    name: evc
+    driver: bridge
+    external: false
