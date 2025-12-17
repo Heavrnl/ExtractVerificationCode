@@ -5,7 +5,6 @@ from send_code import upload
 import re
 from dotenv import load_dotenv
 import os
-import google.generativeai as genai
 from openai import OpenAI
 
 # 加载环境变量
