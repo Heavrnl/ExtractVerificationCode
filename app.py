@@ -6,6 +6,7 @@ import re
 from dotenv import load_dotenv
 import os
 import google.generativeai as genai
+from openai import OpenAI
 
 # 加载环境变量
 load_dotenv()
@@ -59,27 +60,31 @@ def contains_verification_keywords(text):
     text = text.lower()
     return any(keyword.lower() in text for keyword in VERIFICATION_KEYWORDS)
 
-def extract_code_azure(text):
-    text = desensitize_text(text)  # 脱敏处理
+def extract_code_llm(text):
+    """使用 OpenAI 兼容 API 提取验证码"""
+    text = desensitize_text(text)
     prompt_template = os.getenv('PROMPT_TEMPLATE')
     prompt = prompt_template.format(input_text=text)
     
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"
-    }
-    data = {
-        "messages": [
-            {"role": "system", "content": prompt}
-        ],
-        "model": os.getenv('AZURE_MODEL_NAME'),
-        "temperature": 1,
-        "max_tokens": 1000,
-        "top_p": 1
-    }
-    response = requests.post(f"{os.getenv('AZURE_ENDPOINT')}/chat/completions", headers=headers, json=data)
-    response_json = response.json()
-    return response_json['choices'][0]['message']['content'].strip()
+    try:
+        client = OpenAI(
+            api_key=os.getenv('OPENAI_API_KEY'),
+            base_url=os.getenv('OPENAI_BASE_URL')
+        )
+        
+        response = client.chat.completions.create(
+            model=os.getenv('OPENAI_MODEL'),
+            messages=[
+                {"role": "system", "content": prompt}
+            ],
+            temperature=1,
+            max_tokens=1000,
+            top_p=1
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logging.error(f"LLM API error: {e}")
+        return "None"
 
 def extract_code_local(text):
     """使用正则表达式匹配验证码
@@ -113,20 +118,7 @@ def extract_code_local(text):
     # 如果没有找到验证码，返回None
     return "None"
 
-def extract_code_gemini(text):
-    """使用 Gemini API 提取验证码"""
-    text = desensitize_text(text)  # 脱敏处理
-    prompt_template = os.getenv('PROMPT_TEMPLATE')
-    prompt = prompt_template.format(input_text=text)
-    
-    try:
-        genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-        model = genai.GenerativeModel(os.getenv('GEMINI_MODEL'))
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        logging.error(f"Gemini API error: {e}")
-        return "None"
+
 
 @app.route('/evc', methods=['POST'])
 def extract_verification_code():
@@ -140,9 +132,8 @@ def extract_verification_code():
         return jsonify({"message": "No verification code keywords found"}), 400
 
     use_local = os.getenv('USE_LOCAL', 'false').lower() == 'true'
-    api_type = os.getenv('API_TYPE', 'azure').lower()
     
-    logging.info(f"当前配置 - 本地提取: {use_local}, API类型: {api_type}")
+    logging.info(f"当前配置 - 本地提取: {use_local}")
     verification_code = "None"
     
     # 如果启用了本地匹配，先尝试本地匹配
@@ -150,17 +141,11 @@ def extract_verification_code():
         logging.info("尝试本地正则匹配...")
         verification_code = extract_code_local(text)
         logging.info(f"本地匹配结果: {verification_code}")
-    
-    # 如果本地匹配没有结果，使用选定的API
+    # 如果本地匹配没有结果，使用 LLM API
     if verification_code == "None":
-        if api_type == 'azure':
-            logging.info("尝试使用Azure API...")
-            verification_code = extract_code_azure(text)
-            logging.info(f"Azure API结果: {verification_code}")
-        elif api_type == 'gemini':
-            logging.info("尝试使用Gemini API...")
-            verification_code = extract_code_gemini(text)
-            logging.info(f"Gemini API结果: {verification_code}")
+        logging.info("尝试使用 LLM API...")
+        verification_code = extract_code_llm(text)
+        logging.info(f"LLM API结果: {verification_code}")
 
     logging.info(f"最终提取的验证码: {verification_code}")
     
